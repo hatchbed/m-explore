@@ -45,6 +45,40 @@ std::vector<Frontier> FrontierSearch::searchFrom(geometry_msgs::Point position)
   // initialize flag arrays to keep track of visited and frontier cells
   std::vector<bool> frontier_flag(size_x_ * size_y_, false);
   std::vector<bool> visited_flag(size_x_ * size_y_, false);
+  std::vector<uint8_t> border_frontier(size_x_ * size_y_, 0);
+
+  size_t cols = costmap_->getSizeInCellsX();
+  size_t rows = costmap_->getSizeInCellsY();
+  size_t border_cells = 0;
+  for (size_t i = 0; i < cols; i++) {
+    size_t top_idx = costmap_->getIndex(i, 0);
+    if (map_[top_idx] == FREE_SPACE) {
+      border_frontier[top_idx] = 1;
+      border_cells++;
+    }
+
+    size_t bottom_idx = costmap_->getIndex(i, rows - 1);
+    if (map_[bottom_idx] == FREE_SPACE) {
+      border_frontier[bottom_idx] = 1;
+      border_cells++;
+    }
+  }
+
+  for (size_t i = 0; i < rows; i++) {
+    size_t left_idx = costmap_->getIndex(0, i);
+    if (map_[left_idx] == FREE_SPACE) {
+      border_frontier[left_idx] = 1;
+      border_cells++;
+    }
+
+    size_t right_idx = costmap_->getIndex(cols - 1, i);
+    if (map_[right_idx] == FREE_SPACE) {
+      border_frontier[right_idx] = 1;
+      border_cells++;
+    }
+  }
+
+  ROS_INFO("Found %zu frontier cells on the border", border_cells);
 
   // initialize breadth first search
   std::queue<unsigned int> bfs;
@@ -72,9 +106,11 @@ std::vector<Frontier> FrontierSearch::searchFrom(geometry_msgs::Point position)
         bfs.push(nbr);
         // check if cell is new frontier cell (unvisited, NO_INFORMATION, free
         // neighbour)
-      } else if (isNewFrontierCell(nbr, frontier_flag)) {
+      } else if (!frontier_flag[nbr] && (border_frontier[nbr] != 0 || isNewFrontierCell(nbr, frontier_flag))) {
         frontier_flag[nbr] = true;
-        Frontier new_frontier = buildNewFrontier(nbr, pos, frontier_flag);
+        ROS_INFO("building new frontier from %u ...", nbr);
+        Frontier new_frontier = buildNewFrontier(nbr, pos, frontier_flag, border_frontier);
+        ROS_INFO("  size: %zu", new_frontier.points.size());
         if (new_frontier.size * costmap_->getResolution() >=
             min_frontier_size_) {
           frontier_list.push_back(new_frontier);
@@ -96,7 +132,8 @@ std::vector<Frontier> FrontierSearch::searchFrom(geometry_msgs::Point position)
 
 Frontier FrontierSearch::buildNewFrontier(unsigned int initial_cell,
                                           unsigned int reference,
-                                          std::vector<bool>& frontier_flag)
+                                          std::vector<bool>& frontier_flag,
+                                          const std::vector<uint8_t>& border_frontier)
 {
   // initialize frontier structure
   Frontier output;
@@ -127,7 +164,7 @@ Frontier FrontierSearch::buildNewFrontier(unsigned int initial_cell,
     // try adding cells in 8-connected neighborhood to frontier
     for (unsigned int nbr : nhood8(idx, *costmap_)) {
       // check if neighbour is a potential frontier cell
-      if (isNewFrontierCell(nbr, frontier_flag)) {
+      if (!frontier_flag[nbr] && (border_frontier[nbr] != 0 || isNewFrontierCell(nbr, frontier_flag))) {
         // mark cell as frontier
         frontier_flag[nbr] = true;
         unsigned int mx, my;

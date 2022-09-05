@@ -82,6 +82,8 @@ Explore::Explore()
   move_base_client_.waitForServer();
   ROS_INFO("Connected to move_base server");
 
+
+  prev_goal_ = costmap_client_.getRobotPose().position;
   exploring_timer_ =
       relative_nh_.createTimer(ros::Duration(1. / planner_frequency_),
                                [this](const ros::TimerEvent&) { makePlan(); });
@@ -180,8 +182,8 @@ void Explore::makePlan()
 {
   // find frontiers
   auto pose = costmap_client_.getRobotPose();
-  // get frontiers sorted according to cost
-  auto frontiers = search_.searchFrom(pose.position);
+  // get frontiers sorted according to cost, favoring the one closest to the current goal
+  auto frontiers = search_.searchFrom(prev_goal_);
   ROS_DEBUG("found %lu frontiers", frontiers.size());
   for (size_t i = 0; i < frontiers.size(); ++i) {
     ROS_DEBUG("frontier %zd cost: %f", i, frontiers[i].cost);
@@ -208,6 +210,30 @@ void Explore::makePlan()
     return;
   }
   geometry_msgs::Point target_position = frontier->centroid;
+
+  // make sure the target is at least 1 meter away from the bot to ensure that
+  // the bot actually moves
+  tf::Vector3 pos(pose.position.x, pose.position.y, 0);
+  tf::Vector3 tgt(target_position.x, target_position.y, 0);
+  if (pos.distance(tgt) < 1.0) {
+    ROS_DEBUG("frontier centroid is too close to robot, finding alternate point on frontier");
+    std::sort(frontier->points.begin(), frontier->points.end(),
+        [pos](const auto & a, const auto & b) -> bool
+    {
+      tf::Vector3 pt_a(a.x, a.y, 0);
+      tf::Vector3 pt_b(b.x, b.y, 0);
+        return pt_a.distance(pos) < pt_b.distance(pos);
+    });
+
+    for (const auto& point: frontier->points) {
+      tf::Vector3 pt(point.x, point.y, 0);
+      if (pos.distance(pt) < 1.0) {
+        continue;
+      }
+
+      target_position = point;
+    }
+  }
 
   // time out if we are not making any progress
   bool same_goal = prev_goal_ == target_position;
